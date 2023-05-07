@@ -1,0 +1,49 @@
+[tool.poetry]
+name = "target-s3-delta"
+version = "0.0.1"
+description = "`target-s3-delta` is a Singer target for s3-delta, built with the Meltano Singer SDK."
+readme = "README.md"
+authors = ["resul yurttakalan"]
+keywords = [
+    "ELT",
+    "s3-delta",
+]
+license = "Apache 2.0"
+
+[tool.poetry.dependencies]
+python = "<3.12,>=3.8"
+singer-sdk = { version="^0.26.0" }
+requests = "^2.28.2"
+pandas = "^2.0.1"
+deltalake = "^0.8.0"
+
+
+[tool.poetry.dev-dependencies]
+pytest = "^7.2.1"
+singer-sdk = { version="^0.26.0", extras = ["testing"] }
+
+[tool.ruff]
+ignore = [
+    "ANN101",  # missing-type-self
+    "ANN102",  # missing-type-cls
+]
+select = ["ALL"]
+src = ["target_s3_delta"]
+target-version = "py37"
+
+[tool.ruff.flake8-annotations]
+allow-star-arg-any = true
+
+[tool.ruff.isort]
+known-first-party = ["target_s3_delta"]
+
+[tool.ruff.pydocstyle]
+convention = "google"
+
+[build-system]
+requires = ["poetry-core>=1.0.8"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+# CLI declaration
+target-s3-delta = 'target_s3_delta.target:TargetS3Delta.cli'
