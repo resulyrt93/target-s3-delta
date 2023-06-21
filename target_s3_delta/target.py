@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 from typing import List, Optional, Dict
 
@@ -65,23 +66,37 @@ class TargetS3Delta(Target):
             "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
         }
 
-    def _process_endofpipe(self):
+    def write_batches_to_delta(self):
         storage_options = self.get_storage_options()
-
         path = self.config.get("s3_path")
+        mode = self.config.get("mode")
+        partition_by = self.get_partition_config()
 
-        files = os.listdir(TEMP_DATA_DIRECTORY)
+        files = [
+            file
+            for file in os.listdir(TEMP_DATA_DIRECTORY)
+            if file.endswith(".parquet")
+        ]
+
+        if len(files) == 0:
+            self.logger.warn(f"Could not create any file.")
+            return
+
         absolute_files = [f"{TEMP_DATA_DIRECTORY}{file}" for file in files]
 
         data = read_parquet_generator(absolute_files)
-        schema = pq.read_table(absolute_files[0]).schema
+        first_batch = pq.read_table(absolute_files[0])
 
-        partition_by = self.get_partition_config()
+        # Since singer returns at least one last record in incremental cases, we're truncating it.
+        # https://www.stitchdata.com/docs/replication/replication-methods/key-based-incremental
+        if len(first_batch) <= 1 and mode == "append":
+            self.logger.warn(f"No new records.")
+            return
 
         write_deltalake(
             path,
             data,
-            schema=schema,
+            schema=first_batch.schema,
             storage_options=storage_options,
             mode=self.config.get("mode"),
             overwrite_schema=True,
@@ -90,3 +105,22 @@ class TargetS3Delta(Target):
         )
 
         self.logger.info(f"Transaction has created.")
+
+    def _process_endofpipe(self):
+        state = copy.deepcopy(self._latest_state)
+        self._drain_all(self._sinks_to_clear, 1)
+
+        for sink in self._sinks_to_clear:
+            sink.clean_up()
+
+        self._sinks_to_clear = []
+        self._drain_all(list(self._sinks_active.values()), self.max_parallelism)
+
+        for sink in self._sinks_active.values():
+            sink.clean_up()
+
+        self.logger.info(f"All records saved to disk.")
+        self.write_batches_to_delta()
+
+        self._write_state_message(state)
+        self._reset_max_record_age()

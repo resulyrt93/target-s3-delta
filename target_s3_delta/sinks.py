@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 from dateutil import parser
 from deltalake import write_deltalake
@@ -108,7 +109,10 @@ class S3DeltaSink(BatchSink):
         if not is_exist:
             os.makedirs(TEMP_DATA_DIRECTORY)
 
+        start_time = time.time()
         df = pd.DataFrame(context["records"])
-        df.to_parquet(f"{TEMP_DATA_DIRECTORY}{context.get('file_path')}")
+        df.to_parquet(f"{TEMP_DATA_DIRECTORY}{context.get('file_path')}", engine="pyarrow")
+        end_time = time.time()
+        self.logger.info(f"Batch writing finished. Duration: {str((end_time - start_time))}")
 
         context["records"] = []
