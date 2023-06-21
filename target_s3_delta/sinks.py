@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from dateutil import parser
 from deltalake import write_deltalake
 from singer_sdk.helpers._typing import (
@@ -13,12 +15,21 @@ from singer_sdk.sinks import BatchSink
 import pandas as pd
 
 NOT_PROPER_DATETIME_FORMAT = "0000-00-00 00:00:00"
+TEMP_DATA_DIRECTORY = "/tmp/meltano_temp_data/"
+MAX_SIZE_DEFAULT = 50000
 
 
 class S3DeltaSink(BatchSink):
     """s3-delta target sink class."""
 
-    max_size = 10000  # Max records to write in one batch
+    @property
+    def max_size(self) -> int:
+        """Get max batch size.
+
+        Returns:
+            Max number of records to batch before `is_full=True`
+        """
+        return self.config.get("batch_size", MAX_SIZE_DEFAULT)
 
     def process_record(self, record: dict, context: dict) -> None:
         """Load the latest record from the stream.
@@ -84,10 +95,8 @@ class S3DeltaSink(BatchSink):
         Args:
             context: Stream partition or context dictionary.
         """
-        # Sample:
-        # ------
-        # batch_key = context["batch_id"]
-        # context["file_path"] = f"{batch_key}.csv"
+        batch_key = context["batch_id"]
+        context["file_path"] = f"{batch_key}.parquet"
 
     def process_batch(self, context: dict) -> None:
         """Write out any prepped records and return once fully written.
@@ -95,25 +104,11 @@ class S3DeltaSink(BatchSink):
         Args:
             context: Stream partition or context dictionary.
         """
+        is_exist = os.path.exists(TEMP_DATA_DIRECTORY)
+        if not is_exist:
+            os.makedirs(TEMP_DATA_DIRECTORY)
+
         df = pd.DataFrame(context["records"])
-
-        storage_options = {
-            "AWS_ACCESS_KEY_ID": self.config.get("aws_access_key_id"),
-            "AWS_SECRET_ACCESS_KEY": self.config.get("aws_secret_access_key"),
-            "REGION": self.config.get("aws_region"),
-            "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
-        }
-
-        path = self.config.get("s3_path")
-
-        write_deltalake(
-            path,
-            df,
-            storage_options=storage_options,
-            mode="overwrite",
-            overwrite_schema=True,
-        )
-
-        self.logger.info(f"Uploaded {len(context['records'])} rows.")
+        df.to_parquet(f"{TEMP_DATA_DIRECTORY}{context.get('file_path')}")
 
         context["records"] = []
