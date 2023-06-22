@@ -9,9 +9,11 @@ from typing import List, Optional, Dict
 from deltalake import write_deltalake
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pandas as pd
 from singer_sdk import typing as th
 from singer_sdk.target_base import Target
 
+from target_s3_delta.common import ExtractMode
 from target_s3_delta.sinks import (
     S3DeltaSink,
     TEMP_DATA_DIRECTORY,
@@ -20,11 +22,11 @@ from target_s3_delta.sinks import (
 
 def read_parquet_generator(file_paths):
     for file_path in file_paths:
-        # Read the Parquet file
-        table = pq.read_table(file_path)
+        df = pd.read_parquet(file_path, engine="pyarrow")
+        sorted_columns = sorted(df.columns)
+        df = df[sorted_columns]
 
-        # Convert the Table to a single RecordBatch and yield it
-        record_batch = pa.RecordBatch.from_pandas(table.to_pandas())
+        record_batch = pa.RecordBatch.from_pandas(df)
         yield record_batch
 
 
@@ -43,7 +45,7 @@ class TargetS3Delta(Target):
         th.Property("aws_access_key_id", th.StringType, required=True),
         th.Property("aws_secret_access_key", th.StringType, required=True),
         th.Property("aws_region", th.StringType, default="us-east-1"),
-        th.Property("mode", th.StringType, default="overwrite"),
+        th.Property("mode", th.StringType, default=ExtractMode.OVERWRITE),
         th.Property("partition_by", th.StringType),
         th.Property("batch_size", th.IntegerType),
         th.Property("max_rows_per_file", th.IntegerType, default=10 * 1024 * 1024),
@@ -72,11 +74,7 @@ class TargetS3Delta(Target):
         mode = self.config.get("mode")
         partition_by = self.get_partition_config()
 
-        files = [
-            file
-            for file in os.listdir(TEMP_DATA_DIRECTORY)
-            if file.endswith(".parquet")
-        ]
+        files = [file for file in os.listdir(TEMP_DATA_DIRECTORY) if file.endswith(".parquet")]
 
         if len(files) == 0:
             self.logger.warn(f"Could not create any file.")
@@ -87,10 +85,8 @@ class TargetS3Delta(Target):
         data = read_parquet_generator(absolute_files)
         first_batch = pq.read_table(absolute_files[0])
 
-        # Since singer returns at least one last record in incremental cases, we're truncating it.
-        # https://www.stitchdata.com/docs/replication/replication-methods/key-based-incremental
-        if len(first_batch) <= 1 and mode == "append":
-            self.logger.warn(f"No new records.")
+        if len(first_batch) == 0:
+            self.logger.info(f"Result doesn't have any record. Not created any transaction in Delta table")
             return
 
         write_deltalake(
@@ -98,13 +94,13 @@ class TargetS3Delta(Target):
             data,
             schema=first_batch.schema,
             storage_options=storage_options,
-            mode=self.config.get("mode"),
+            mode=mode,
             overwrite_schema=True,
             partition_by=partition_by,
             max_rows_per_file=self.config.get("max_rows_per_file"),
         )
 
-        self.logger.info(f"Transaction has created.")
+        self.logger.info(f"Transaction has created. Mode: {mode}")
 
     def _process_endofpipe(self):
         state = copy.deepcopy(self._latest_state)
