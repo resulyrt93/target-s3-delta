@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "target-s3-delta"
-version = "0.0.6"
+version = "0.0.10"
 description = "`target-s3-delta` is a Singer target for s3-delta, built with the Meltano Singer SDK."
 readme = "README.md"
 authors = ["resul yurttakalan"]
@@ -15,7 +15,7 @@ python = "<3.12,>=3.8"
 singer-sdk = { version="^0.26.0" }
 requests = "^2.28.2"
 pandas = "^2.0.1"
-deltalake = "^0.8.0"
+deltalake = "^0.10.0"
 
 
 [tool.poetry.dev-dependencies]

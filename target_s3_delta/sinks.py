@@ -3,22 +3,15 @@
 from __future__ import annotations
 
 import os
-import time
 from typing import Dict, Optional
 
-from dateutil import parser
 from singer_sdk import PluginBase
-from singer_sdk.helpers._typing import (
-    DatetimeErrorTreatmentEnum,
-    get_datelike_property_type,
-    handle_invalid_timestamp_in_record,
-)
+from singer_sdk.helpers._typing import DatetimeErrorTreatmentEnum
 from singer_sdk.sinks import BatchSink
 import pandas as pd
 
 from target_s3_delta.common import ExtractMode
 
-NOT_PROPER_DATETIME_FORMAT = "0000-00-00 00:00:00"
 TEMP_DATA_DIRECTORY = "/tmp/meltano_temp_data/"
 MAX_SIZE_DEFAULT = 50000
 
@@ -27,6 +20,10 @@ class S3DeltaSink(BatchSink):
     """s3-delta target sink class."""
 
     replication_configs: Optional[Dict] = None
+
+    @property
+    def datetime_error_treatment(self) -> DatetimeErrorTreatmentEnum:
+        return DatetimeErrorTreatmentEnum.NULL
 
     def __init__(
         self,
@@ -99,51 +96,7 @@ class S3DeltaSink(BatchSink):
             # https://www.stitchdata.com/docs/replication/replication-methods/key-based-incremental
             return
 
-        for key in record:
-            date_val = record[key]
-            if date_val == NOT_PROPER_DATETIME_FORMAT:
-                record[key] = None
-
         context["records"].append(record)
-
-    def _parse_timestamps_in_record(
-        self,
-        record: dict,
-        schema: dict,
-        treatment: DatetimeErrorTreatmentEnum,
-    ) -> None:
-        """Parse strings to datetime.datetime values, repairing or erroring on failure.
-
-        Attempts to parse every field that is of type date/datetime/time. If its value
-        is out of range, repair logic will be driven by the `treatment` input arg:
-        MAX, NULL, or ERROR.
-
-        Args:
-            record: Individual record in the stream.
-            schema:
-            treatment:
-        """
-        for key in record:
-            datelike_type = get_datelike_property_type(schema["properties"][key])
-            if datelike_type:
-                date_val = record[key]
-                try:
-                    if record[key] is not None:
-                        if date_val == NOT_PROPER_DATETIME_FORMAT:
-                            record[key] = None
-                        else:
-                            date_val = parser.parse(date_val)
-                except parser.ParserError as ex:
-                    date_val = handle_invalid_timestamp_in_record(
-                        record,
-                        [key],
-                        date_val,
-                        datelike_type,
-                        ex,
-                        treatment,
-                        self.logger,
-                    )
-                record[key] = date_val
 
     def start_batch(self, context: dict) -> None:
         """Start a batch.
@@ -163,6 +116,7 @@ class S3DeltaSink(BatchSink):
         Args:
             context: Stream partition or context dictionary.
         """
+        self.logger.info("Batch processing has started.")
         is_exist = os.path.exists(TEMP_DATA_DIRECTORY)
         if not is_exist:
             os.makedirs(TEMP_DATA_DIRECTORY)
@@ -171,3 +125,4 @@ class S3DeltaSink(BatchSink):
         df.to_parquet(f"{TEMP_DATA_DIRECTORY}{context.get('file_path')}", engine="pyarrow")
 
         context["records"] = []
+        self.logger.info("Batch processing has finished.")

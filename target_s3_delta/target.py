@@ -8,7 +8,6 @@ from typing import List, Optional, Dict
 
 from deltalake import write_deltalake
 import pyarrow as pa
-import pyarrow.parquet as pq
 import pandas as pd
 from singer_sdk import typing as th
 from singer_sdk.target_base import Target
@@ -20,14 +19,29 @@ from target_s3_delta.sinks import (
 )
 
 
-def read_parquet_generator(file_paths):
-    for file_path in file_paths:
-        df = pd.read_parquet(file_path, engine="pyarrow")
-        sorted_columns = sorted(df.columns)
-        df = df[sorted_columns]
+def remove_tz_from_dataframe(df_in):
+    df = df_in.copy()
+    col_times = [col for col in df.columns if any([isinstance(x, pd.Timestamp) for x in df[col]])]
+    for col in col_times:
+        df[col] = df[col].dt.tz_localize(None)
+        df[col] = df[col].dt.as_unit("us")
+    return df
 
-        record_batch = pa.RecordBatch.from_pandas(df)
-        yield record_batch
+
+def get_record_batch(file_path: str) -> Optional[pa.RecordBatch]:
+    df = pd.read_parquet(file_path, engine="pyarrow")
+    if len(df) == 0:
+        return None
+    df = remove_tz_from_dataframe(df)
+    sorted_columns = sorted(df.columns)
+    df = df[sorted_columns]
+
+    return pa.RecordBatch.from_pandas(df)
+
+
+def read_parquet_generator(file_paths: List[str]):
+    for file_path in file_paths:
+        yield get_record_batch(file_path)
 
 
 class TargetS3Delta(Target):
@@ -83,9 +97,9 @@ class TargetS3Delta(Target):
         absolute_files = [f"{TEMP_DATA_DIRECTORY}{file}" for file in files]
 
         data = read_parquet_generator(absolute_files)
-        first_batch = pq.read_table(absolute_files[0])
+        first_batch = get_record_batch(absolute_files[0])
 
-        if len(first_batch) == 0:
+        if first_batch is None:
             self.logger.info(f"Result doesn't have any record. Not created any transaction in Delta table")
             return
 
