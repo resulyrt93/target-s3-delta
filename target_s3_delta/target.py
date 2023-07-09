@@ -9,6 +9,7 @@ from typing import List, Optional, Dict
 from deltalake import write_deltalake
 import pyarrow as pa
 import pandas as pd
+from deltalake.writer import try_get_table_and_table_uri
 from singer_sdk import typing as th
 from singer_sdk.target_base import Target
 
@@ -88,6 +89,10 @@ class TargetS3Delta(Target):
         mode = self.config.get("mode")
         partition_by = self.get_partition_config()
 
+        if not os.path.exists(TEMP_DATA_DIRECTORY):
+            self.logger.warn(f"Could not create any file.")
+            return
+
         files = [file for file in os.listdir(TEMP_DATA_DIRECTORY) if file.endswith(".parquet")]
 
         if len(files) == 0:
@@ -97,16 +102,21 @@ class TargetS3Delta(Target):
         absolute_files = [f"{TEMP_DATA_DIRECTORY}{file}" for file in files]
 
         data = read_parquet_generator(absolute_files)
-        first_batch = get_record_batch(absolute_files[0])
 
-        if first_batch is None:
-            self.logger.info(f"Result doesn't have any record. Not created any transaction in Delta table")
-            return
+        table, table_uri = try_get_table_and_table_uri(path, storage_options)
+        if table and mode == ExtractMode.APPEND:
+            schema = table.schema().to_pyarrow()
+        else:
+            first_batch = get_record_batch(absolute_files[0])
+            if first_batch is None:
+                self.logger.info(f"Result doesn't have any record. Not created any transaction in Delta table")
+                return
+            schema = first_batch.schema
 
         write_deltalake(
             path,
             data,
-            schema=first_batch.schema,
+            schema=schema,
             storage_options=storage_options,
             mode=mode,
             overwrite_schema=True,
