@@ -18,6 +18,7 @@ from target_s3_delta.sinks import (
     S3DeltaSink,
     TEMP_DATA_DIRECTORY,
 )
+from target_s3_delta.utils import float_to_decimal, walk_schema_for_numeric_precision
 
 
 def remove_tz_from_dataframe(df_in):
@@ -68,6 +69,15 @@ class TargetS3Delta(Target):
 
     default_sink_class = S3DeltaSink
 
+    def _process_schema_message(self, message_dict: dict) -> None:
+        schema = float_to_decimal(message_dict["schema"])
+        # Fix issue with numeric attributes defined with low "multipleOf"
+        #  values (e.g. 1e-38) causing errors during validation
+        walk_schema_for_numeric_precision(schema)
+        message_dict["schema"] = schema
+
+        super()._process_schema_message(message_dict)
+
     def get_partition_config(self) -> Optional[List[str]]:
         partition_config: str = self.config.get("partition_by")
         if partition_config is None or partition_config == "":
@@ -103,14 +113,15 @@ class TargetS3Delta(Target):
 
         data = read_parquet_generator(absolute_files)
 
+        first_batch = get_record_batch(absolute_files[0])
+        if first_batch is None:
+            self.logger.info(f"Result doesn't have any record. Not created any transaction in Delta table")
+            return
+
         table, table_uri = try_get_table_and_table_uri(path, storage_options)
         if table and mode == ExtractMode.APPEND:
             schema = table.schema().to_pyarrow()
         else:
-            first_batch = get_record_batch(absolute_files[0])
-            if first_batch is None:
-                self.logger.info(f"Result doesn't have any record. Not created any transaction in Delta table")
-                return
             schema = first_batch.schema
 
         write_deltalake(

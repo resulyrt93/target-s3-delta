@@ -11,6 +11,7 @@ from singer_sdk.sinks import BatchSink
 import pandas as pd
 
 from target_s3_delta.common import ExtractMode
+from target_s3_delta.utils import float_to_decimal
 
 TEMP_DATA_DIRECTORY = "/tmp/meltano_temp_data/"
 MAX_SIZE_DEFAULT = 50000
@@ -72,6 +73,11 @@ class S3DeltaSink(BatchSink):
             Max number of records to batch before `is_full=True`
         """
         return self.config.get("batch_size", MAX_SIZE_DEFAULT)
+
+    def _validate_and_parse(self, record: dict) -> dict:
+        """Validate or repair the record, parsing to python-native types as needed."""
+        record = float_to_decimal(record)
+        return super()._validate_and_parse(record=record)
 
     def is_duplicate_replication(self, record: dict) -> bool:
         """Whether record is duplicate replication"""
