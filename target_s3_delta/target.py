@@ -63,11 +63,16 @@ class TargetS3Delta(Target):
         th.Property("aws_region", th.StringType, default="us-east-1"),
         th.Property("mode", th.StringType, default=ExtractMode.OVERWRITE),
         th.Property("partition_by", th.StringType),
-        th.Property("batch_size", th.IntegerType),
-        th.Property("max_rows_per_file", th.IntegerType, default=10 * 1024 * 1024),
+        th.Property("batch_size", th.StringType),
+        th.Property("max_rows_per_file", th.StringType, default=str(10 * 1024 * 1024)),
     ).to_dict()
 
     default_sink_class = S3DeltaSink
+
+    @property
+    def mode(self) -> ExtractMode:
+        """Get extract mode"""
+        return self.config.get("mode")
 
     def _process_schema_message(self, message_dict: dict) -> None:
         schema = float_to_decimal(message_dict["schema"])
@@ -96,7 +101,6 @@ class TargetS3Delta(Target):
     def write_batches_to_delta(self):
         storage_options = self.get_storage_options()
         path = self.config.get("s3_path")
-        mode = self.config.get("mode")
         partition_by = self.get_partition_config()
 
         if not os.path.exists(TEMP_DATA_DIRECTORY):
@@ -119,7 +123,7 @@ class TargetS3Delta(Target):
             return
 
         table, table_uri = try_get_table_and_table_uri(path, storage_options)
-        if table and mode == ExtractMode.APPEND:
+        if table and self.mode == ExtractMode.APPEND:
             schema = table.schema().to_pyarrow()
         else:
             schema = first_batch.schema
@@ -129,13 +133,26 @@ class TargetS3Delta(Target):
             data,
             schema=schema,
             storage_options=storage_options,
-            mode=mode,
+            mode=self.mode,
             overwrite_schema=True,
             partition_by=partition_by,
-            max_rows_per_file=self.config.get("max_rows_per_file"),
+            max_rows_per_file=int(self.config.get("max_rows_per_file")),
         )
 
-        self.logger.info(f"Transaction has created. Mode: {mode}")
+        self.logger.info(f"Transaction has created. Mode: {self.mode}")
+
+    def _process_batch_message(self, message_dict: dict) -> None:
+        """Handle the optional BATCH message extension."""
+        if self.mode == ExtractMode.APPEND:
+            file_path = message_dict["filepath"]
+            stream = message_dict["stream"]
+            df = pd.read_parquet(file_path)
+            records = df.to_dict("records")
+            for record in records:
+                self._process_record_message(message_dict={"stream": stream, "record": record})
+
+            os.remove(file_path)
+        self._handle_max_record_age()
 
     def _process_endofpipe(self):
         state = copy.deepcopy(self._latest_state)
