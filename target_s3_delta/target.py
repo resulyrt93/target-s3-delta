@@ -152,9 +152,10 @@ class TargetS3Delta(Target):
                 self._process_record_message(message_dict={"stream": stream, "record": record})
 
             os.remove(file_path)
-        self._handle_max_record_age()
+            self._handle_max_record_age()
 
     def _process_endofpipe(self):
+        self.logger.info("End of pipe processes have started.")
         state = copy.deepcopy(self._latest_state)
         self._drain_all(self._sinks_to_clear, 1)
 

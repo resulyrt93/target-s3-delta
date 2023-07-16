@@ -20,45 +20,9 @@ MAX_SIZE_DEFAULT = 200000
 class S3DeltaSink(BatchSink):
     """s3-delta target sink class."""
 
-    replication_configs: Optional[Dict] = None
-
     @property
     def datetime_error_treatment(self) -> DatetimeErrorTreatmentEnum:
         return DatetimeErrorTreatmentEnum.NULL
-
-    def __init__(
-        self,
-        target: PluginBase,
-        stream_name: str,
-        schema: dict,
-        key_properties: list[str] | None,
-    ) -> None:
-        super().__init__(
-            target=target,
-            stream_name=stream_name,
-            schema=schema,
-            key_properties=key_properties,
-        )
-        self.state = target._latest_state
-        self.set_replication_configs()
-
-    def set_replication_configs(self) -> None:
-        """
-        Checks state info if it exists it sets replication configurations to filter
-        duplicate records in process_record
-        """
-        if self.mode == ExtractMode.APPEND:
-            bookmarks: dict = self.state.get("bookmarks", {})
-            if len(bookmarks):
-                replication_configs = bookmarks.get(list(bookmarks.keys())[0])
-                replication_key = replication_configs.get("replication_key")
-                replication_key_value = replication_configs.get("replication_key_value")
-
-                if replication_key is not None and replication_key_value is not None:
-                    self.replication_configs = {
-                        "replication_key": replication_key,
-                        "replication_key_value": replication_key_value,
-                    }
 
     @property
     def mode(self) -> ExtractMode:
@@ -79,15 +43,6 @@ class S3DeltaSink(BatchSink):
         record = float_to_decimal(record)
         return super()._validate_and_parse(record=record)
 
-    def is_duplicate_replication(self, record: dict) -> bool:
-        """Whether record is duplicate replication"""
-        if self.replication_configs is not None:
-            replication_key = self.replication_configs.get("replication_key")
-            replication_key_value = self.replication_configs.get("replication_key_value")
-
-            return bool(replication_key in record and record[replication_key] == replication_key_value)
-        return False
-
     def process_record(self, record: dict, context: dict) -> None:
         """Load the latest record from the stream.
         Args:
@@ -96,11 +51,6 @@ class S3DeltaSink(BatchSink):
         """
         if "records" not in context:
             context["records"] = []
-
-        if self.is_duplicate_replication(record):
-            # Since singer returns at least one last record in incremental cases, we're truncating it.
-            # https://www.stitchdata.com/docs/replication/replication-methods/key-based-incremental
-            return
 
         context["records"].append(record)
 
