@@ -142,17 +142,7 @@ class TargetS3Delta(Target):
         self.logger.info(f"Transaction has created. Mode: {self.mode}")
 
     def _process_batch_message(self, message_dict: dict) -> None:
-        """Handle the optional BATCH message extension."""
-        if self.mode == ExtractMode.APPEND:
-            file_path = message_dict["filepath"]
-            stream = message_dict["stream"]
-            df = pd.read_parquet(file_path)
-            records = df.to_dict("records")
-            for record in records:
-                self._process_record_message(message_dict={"stream": stream, "record": record})
-
-            os.remove(file_path)
-            self._handle_max_record_age()
+        self.logger.info(f"New batch received. Message: {str(message_dict)}")
 
     def _process_endofpipe(self):
         self.logger.info("End of pipe processes have started.")
